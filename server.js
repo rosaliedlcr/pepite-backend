@@ -2,8 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
-const fetch = require('node-fetch');
 
 const app = express();
 app.use(cors());
@@ -17,46 +19,41 @@ const upload = multer({
 // --- Config (set these as environment variables on Render, never commit real values) ---
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const HF_TOKEN = process.env.HF_TOKEN;
-const HF_MODEL = process.env.HF_MODEL || 'openai/clip-vit-base-patch32';
 const PORT = process.env.PORT || 3000;
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !HF_TOKEN) {
-  console.warn('⚠️  Variables d\'environnement manquantes — vérifie SUPABASE_URL, SUPABASE_SERVICE_KEY, HF_TOKEN.');
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  console.warn('⚠️  Variables d\'environnement manquantes — vérifie SUPABASE_URL et SUPABASE_SERVICE_KEY.');
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-// --- Call Hugging Face to get an image embedding vector ---
+// --- Local image embedding model (runs inside this server, no external API call) ---
+// Loaded once, lazily, on the first request — the first call after a cold start
+// will be slower (downloading + loading the model), subsequent calls are fast.
+let embedderPromise = null;
+function getEmbedder() {
+  if (!embedderPromise) {
+    embedderPromise = import('@huggingface/transformers').then(({ pipeline }) =>
+      pipeline('image-feature-extraction', 'Xenova/clip-vit-base-patch32', { quantized: true })
+    );
+  }
+  return embedderPromise;
+}
+
 async function getEmbedding(buffer) {
-  const res = await fetch(`https://router.huggingface.co/hf-inference/models/${HF_MODEL}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${HF_TOKEN}`,
-      'Content-Type': 'application/octet-stream',
-    },
-    body: buffer,
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Hugging Face API error ${res.status}: ${text.slice(0, 300)}`);
+  const embedder = await getEmbedder();
+  const tmpPath = path.join(os.tmpdir(), `img-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`);
+  fs.writeFileSync(tmpPath, buffer);
+  try {
+    const output = await embedder(tmpPath);
+    const embedding = Array.from(output.data);
+    if (!embedding.length || typeof embedding[0] !== 'number') {
+      throw new Error('Le modèle local n\'a pas renvoyé un vecteur valide.');
+    }
+    return embedding;
+  } finally {
+    fs.unlink(tmpPath, () => {});
   }
-
-  const data = await res.json();
-
-  // The exact response shape can vary by model/task version on HF's side.
-  // We flatten nested arrays until we hit a flat list of numbers.
-  let embedding = data;
-  let guard = 0;
-  while (Array.isArray(embedding) && Array.isArray(embedding[0]) && guard < 5) {
-    embedding = embedding[0];
-    guard++;
-  }
-  if (!Array.isArray(embedding) || typeof embedding[0] !== 'number') {
-    throw new Error('Format de réponse Hugging Face inattendu: ' + JSON.stringify(data).slice(0, 300));
-  }
-  return embedding;
 }
 
 // --- Add a real item to the catalog ---
