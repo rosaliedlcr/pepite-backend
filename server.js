@@ -29,7 +29,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 // --- Call Hugging Face to get an image embedding vector ---
 async function getEmbedding(buffer) {
-  const res = await fetch(`https://api-inference.huggingface.co/models/${HF_MODEL}`, {
+  const res = await fetch(`https://router.huggingface.co/hf-inference/models/${HF_MODEL}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${HF_TOKEN}`,
