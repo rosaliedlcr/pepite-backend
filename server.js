@@ -34,7 +34,7 @@ let embedderPromise = null;
 function getEmbedder() {
   if (!embedderPromise) {
     embedderPromise = import('@huggingface/transformers').then(({ pipeline }) =>
-      pipeline('image-feature-extraction', 'Xenova/clip-vit-base-patch32', { quantized: true })
+      pipeline('image-feature-extraction', 'Xenova/clip-vit-base-patch32', { dtype: 'q8' })
     );
   }
   return embedderPromise;
